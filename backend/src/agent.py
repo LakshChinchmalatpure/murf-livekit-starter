@@ -13,7 +13,11 @@ from livekit.agents import (
     inference,
     tokenize,
     room_io,
+    function_tool,
+    RunContext,
 )
+import json
+import db
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -21,31 +25,91 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
-# Change this prompt to change what your voice agent does.
-# See README.md for example prompts (customer support, language tutor, receptionist).
-SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
+# # Change this prompt to change what your voice agent does.
+# # See README.md for example prompts (customer support, language tutor, receptionist).
+# SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
 
 
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(instructions=SYSTEM_PROMPT)
 
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
-    #
-    #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
-    #
-    #     Args:
-    #         location: The location to look up weather information for (e.g. city name)
-    #     """
-    #
-    #     logger.info(f"Looking up weather for {location}")
-    #
-    #     return "sunny with a temperature of 70 degrees."
+    @function_tool
+    async def lookup_caller(self, context: RunContext, name: str | None = None) -> str:
+        """Look up a caller's record in the database.
+        
+        This tool can automatically search using the current call's connection ID.
+        If the caller provides a name, you can also search by name.
+        
+        Args:
+            name: Optional name of the caller to search for.
+        """
+        user_id = None
+        try:
+            if context.session and context.session.room_io and context.session.room_io.linked_participant:
+                user_id = context.session.room_io.linked_participant.identity
+        except (RuntimeError, AttributeError):
+            pass
+            
+        logger.info(f"lookup_caller called with name={name}, connection user_id={user_id}")
+        
+        # 1. Try to find by connection user_id
+        record = None
+        if user_id:
+            record = db.get_caller(user_id=user_id)
+            
+        # 2. If not found and name is provided, try to find by name
+        if not record and name:
+            record = db.get_caller(name=name)
+            
+        if record:
+            logger.info(f"lookup_caller found record: {record}")
+            return json.dumps(record)
+            
+        logger.info("lookup_caller: No record found.")
+        return "No caller record found."
+
+    @function_tool
+    async def save_caller_info(
+        self,
+        context: RunContext,
+        name: str,
+        language_preference: str,
+        facts: str
+    ) -> str:
+        """Save or update a caller's record in the database.
+        
+        IMPORTANT: Before calling this tool, you MUST explicitly ask the caller for permission 
+        to remember/save their information and tell them what you are saving. 
+        If they refuse, do NOT call this tool.
+        
+        Args:
+            name: The caller's name.
+            language_preference: The caller's preferred language (e.g. 'English', 'Hindi', 'Hinglish').
+            facts: A JSON string containing 2 to 4 facts relevant to their Financial Services track 
+                   (e.g., {"schemes_checked": ["PM Kisan"], "eligible": "yes"}). 
+                   Do NOT include any account numbers, PINs, OTPs, CVVs, card numbers, or ID numbers here.
+        """
+        user_id = None
+        try:
+            if context.session and context.session.room_io and context.session.room_io.linked_participant:
+                user_id = context.session.room_io.linked_participant.identity
+        except (RuntimeError, AttributeError):
+            pass
+            
+        if not user_id:
+            # Fallback to name as user_id if participant identity is not available
+            user_id = f"user_{name.lower().replace(' ', '_')}"
+            
+        logger.info(f"save_caller_info called for user_id={user_id}, name={name}")
+        
+        try:
+            facts_dict = json.loads(facts)
+        except Exception:
+            return "Error: facts must be a valid JSON string."
+            
+        record = db.save_caller(user_id, name, language_preference, facts_dict)
+        return f"Caller record saved successfully: {json.dumps(record)}"
 
 
 server = AgentServer()
