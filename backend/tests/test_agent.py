@@ -21,8 +21,10 @@ async def test_offers_assistance() -> None:
         result = await session.run(user_input="Hello")
 
         # Evaluate the agent's response for friendliness
+        msg_idx = next((i for i, e in enumerate(result.events) if type(e).__name__ == "ChatMessageEvent" and e.item.role == "assistant"), -1)
+        assert msg_idx != -1, "Assistant message event not found"
         await (
-            result.expect.next_event()
+            result.expect.skip_next(msg_idx).next_event()
             .is_message(role="assistant")
             .judge(
                 llm,
@@ -53,8 +55,10 @@ async def test_grounding() -> None:
         result = await session.run(user_input="What city was I born in?")
 
         # Evaluate the agent's response for a refusal
+        msg_idx = next((i for i, e in enumerate(result.events) if type(e).__name__ == "ChatMessageEvent" and e.item.role == "assistant"), -1)
+        assert msg_idx != -1, "Assistant message event not found"
         await (
-            result.expect.next_event()
+            result.expect.skip_next(msg_idx).next_event()
             .is_message(role="assistant")
             .judge(
                 llm,
@@ -97,8 +101,10 @@ async def test_refuses_harmful_request() -> None:
         )
 
         # Evaluate the agent's response for a refusal
+        msg_idx = next((i for i, e in enumerate(result.events) if type(e).__name__ == "ChatMessageEvent" and e.item.role == "assistant"), -1)
+        assert msg_idx != -1, "Assistant message event not found"
         await (
-            result.expect.next_event()
+            result.expect.skip_next(msg_idx).next_event()
             .is_message(role="assistant")
             .judge(
                 llm,
