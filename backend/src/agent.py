@@ -18,6 +18,7 @@ from livekit.agents import (
 )
 import json
 import db
+import schemes
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -110,6 +111,65 @@ class Assistant(Agent):
             
         record = db.save_caller(user_id, name, language_preference, facts_dict)
         return f"Caller record saved successfully: {json.dumps(record)}"
+
+    @function_tool
+    async def get_supported_schemes(self, context: RunContext) -> str:
+        """Get the list of supported Indian government financial schemes and their descriptions.
+        
+        Use this tool when a user asks what schemes you support, or what schemes they can check eligibility for.
+        """
+        logger.info("get_supported_schemes tool called.")
+        try:
+            res = schemes.get_supported_schemes_list()
+            return json.dumps(res)
+        except Exception as e:
+            logger.error(f"Error in get_supported_schemes: {e}")
+            return json.dumps({
+                "error": "Failed to retrieve schemes list due to an internal error.",
+                "is_live": False,
+                "last_updated": "unknown"
+            })
+
+    @function_tool
+    async def check_scheme_eligibility(
+        self,
+        context: RunContext,
+        scheme_name: str,
+        answers: str
+    ) -> str:
+        """Evaluate a user's eligibility and retrieve the required document checklist for a specific scheme.
+        
+        Before calling this tool, you must gather the relevant answers (e.g. age, monthly income, land ownership) 
+        from the user through conversation.
+        
+        Args:
+            scheme_name: The exact key of the scheme to check (e.g., 'PM Kisan', 'PM Jan Dhan Yojana', 'PM Shram Yogi Maandhan', 'PM Suraksha Bima Yojana').
+            answers: A JSON string containing the user's details.
+                     Required keys for 'PM Kisan': {"owns_land": bool, "is_income_tax_payer": bool}
+                     Required keys for 'PM Jan Dhan Yojana': {"has_other_bank_account": bool, "age": int}
+                     Required keys for 'PM Shram Yogi Maandhan': {"age": int, "monthly_income": float, "is_unorganized_worker": bool, "is_covered_under_epf_esic": bool, "is_income_tax_payer": bool}
+                     Required keys for 'PM Suraksha Bima Yojana': {"age": int, "has_savings_bank_account": bool}
+        """
+        logger.info(f"check_scheme_eligibility tool called for scheme_name={scheme_name} with answers={answers}")
+        try:
+            answers_dict = json.loads(answers)
+        except Exception:
+            return json.dumps({
+                "error": "Invalid input format. Answers must be a valid JSON string.",
+                "is_live": False,
+                "last_updated": "unknown"
+            })
+            
+        try:
+            res = schemes.evaluate_eligibility(scheme_name, answers_dict)
+            return json.dumps(res)
+        except Exception as e:
+            logger.error(f"Error in check_scheme_eligibility: {e}")
+            return json.dumps({
+                "error": "Failed to evaluate scheme eligibility due to an internal error.",
+                "is_live": False,
+                "last_updated": "unknown"
+            })
 
 
 server = AgentServer()
