@@ -1,0 +1,62 @@
+{
+  "last_updated": "2026-08-10",
+  "schemes": {
+    "PM Kisan": {
+      "name": "Pradhan Mantri Kisan Samman Nidhi",
+      "description": "Income support of Rs. 6000 per year in three equal installments to all landholding farmer families.",
+      "eligibility": {
+        "owns_land": true,
+        "is_income_tax_payer": false
+      },
+      "documents": [
+        "Aadhaar Card",
+        "Land ownership documents (Khatauni/Patta)",
+        "Bank Account details",
+        "Mobile number"
+      ]
+    },
+    "PM Jan Dhan Yojana": {
+      "name": "Pradhan Mantri Jan Dhan Yojana",
+      "description": "National Mission for Financial Inclusion to ensure access to financial services like basic savings accounts, remittance, credit, insurance, and pension in an affordable manner.",
+      "eligibility": {
+        "has_other_bank_account": false,
+        "min_age": 10
+      },
+      "documents": [
+        "Aadhaar Card (or Voter ID, PAN card, Driving License, NREGA Job Card)",
+        "Passport size photograph"
+      ]
+    },
+    "PM Shram Yogi Maandhan": {
+      "name": "Pradhan Mantri Shram Yogi Maan-dhan",
+      "description": "Voluntary and contributory pension scheme for unorganized workers to get Rs. 3000 monthly pension after age 60.",
+      "eligibility": {
+        "min_age": 18,
+        "max_age": 40,
+        "max_monthly_income": 15000,
+        "is_unorganized_worker": true,
+        "is_covered_under_epf_esic": false,
+        "is_income_tax_payer": false
+      },
+      "documents": [
+        "Aadhaar Card",
+        "Savings Bank Account / Jan Dhan Account details with IFSC",
+        "Mobile number"
+      ]
+    },
+    "PM Suraksha Bima Yojana": {
+      "name": "Pradhan Mantri Suraksha Bima Yojana",
+      "description": "Accident insurance scheme offering accidental death and disability cover of Rs. 2 Lakh for a premium of Rs. 20 per annum.",
+      "eligibility": {
+        "min_age": 18,
+        "max_age": 70,
+        "has_savings_bank_account": true
+      },
+      "documents": [
+        "Aadhaar Card",
+        "Bank Account details (with auto-debit consent)",
+        "Completed nominee details"
+      ]
+    }
+  }
+}
