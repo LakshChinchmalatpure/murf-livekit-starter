@@ -176,6 +176,22 @@ Default is Google Gemini. To switch:
 - **Gemini (default):** Set `GOOGLE_API_KEY` in `.env.local`
 - **OpenAI:** Set `OPENAI_API_KEY`, install `livekit-agents[openai]`, and change the `llm=` argument
 
+## Government Schemes Eligibility Checker
+
+The agent includes a real-world scheme eligibility checker and document checklist generator for Indian government financial schemes:
+1. **PM Kisan** (Pradhan Mantri Kisan Samman Nidhi)
+2. **PM Jan Dhan Yojana** (PMJDY)
+3. **PM Shram Yogi Maandhan** (PM-SYM)
+4. **PM Suraksha Bima Yojana** (PMSBY)
+
+### How it fetches data and handles fallback:
+- **API Fetch and Fallback:** The agent attempts to fetch scheme details from a remote repository via HTTP. To handle slow connections or timeouts, it enforces a strict **2.0-second timeout**.
+- **Offline Mode:** If the connection fails or times out, the agent catches the error and falls back to a hand-built local JSON dataset `src/schemes_data.json` updated on **August 10, 2026**.
+- **Dialogue Handling:** The agent communicates to the user:
+  - The date the data was last updated (e.g., "according to rules updated on August 10, 2026").
+  - If the offline cached database was used (e.g., "I couldn't reach the live government portal, so I am using cached rules updated on August 10, 2026").
+  - Eligibility status, reasons, and a required document checklist.
+
 ## Testing
 
 The project includes an eval suite based on the LiveKit Agents [testing framework](https://docs.livekit.io/agents/build/testing/):
