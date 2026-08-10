@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ConnectionState } from 'livekit-client';
 import { 
   useSessionContext, 
   useVoiceAssistant, 
   useTrackVolume, 
   useSessionMessages,
-  useLocalParticipant 
+  useLocalParticipant,
+  useChat
 } from '@livekit/components-react';
 import { 
   Mic, 
@@ -279,6 +280,28 @@ function ActiveVoiceCard({
     }
   };
 
+  const [textInput, setTextInput] = useState('');
+  const { send, isSending } = useChat();
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!textInput.trim() || isSending) return;
+    try {
+      await send(textInput.trim());
+      setTextInput('');
+    } catch (err) {
+      console.error('Failed to send text message:', err);
+    }
+  };
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, chatOpen]);
+
   const activeState = (agentState === 'speaking' || agentState === 'thinking') ? 'speaking' : 'listening';
 
   return (
@@ -384,35 +407,62 @@ function ActiveVoiceCard({
         </div>
       </div>
 
+      
       {/* COLLAPSIBLE TRANSCRIPT AREA */}
       {chatOpen && (
-        <div className="w-full mt-6 border-t border-border/50 max-h-60 overflow-y-auto bg-muted/20 px-6 py-4 space-y-3 [scrollbar-width:thin] text-left">
+        <div className="w-full mt-6 border-t border-border/50 bg-muted/10 px-6 py-4 flex flex-col gap-3 text-left">
           <h4 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
             {t.transcriptTitle}
           </h4>
-          {messages.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic">{t.transcriptEmpty}</p>
-          ) : (
-            <div className="space-y-2 text-xs">
-              {messages.map((msg: any, i: number) => {
-                const isUser = msg.from?.isLocal === true;
-                return (
-                  <div key={i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
-                    <span className="text-[9px] font-bold text-muted-foreground mb-0.5">
-                      {isUser ? t.transcriptSenderUser : t.transcriptSenderAgent}
-                    </span>
-                    <div className={`px-3 py-2 rounded-xl max-w-[85%] ${
-                      isUser 
-                        ? 'bg-primary text-white rounded-tr-none' 
-                        : 'bg-card border border-border text-foreground rounded-tl-none'
-                    }`}>
-                      {msg.message}
+          
+          <div className="max-h-56 overflow-y-auto space-y-3 [scrollbar-width:thin] pr-1">
+            {messages.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">{t.transcriptEmpty}</p>
+            ) : (
+              <div className="space-y-2 text-xs">
+                {messages.map((msg: any, i: number) => {
+                  const isUser = msg.from?.isLocal === true;
+                  return (
+                    <div key={i} className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}>
+                      <span className="text-[9px] font-bold text-muted-foreground mb-0.5">
+                        {isUser ? t.transcriptSenderUser : t.transcriptSenderAgent}
+                      </span>
+                      <div className={`px-3 py-2 rounded-xl max-w-[85%] ${
+                        isUser 
+                          ? 'bg-primary text-white rounded-tr-none shadow-sm' 
+                          : 'bg-card border border-border text-foreground rounded-tl-none shadow-sm'
+                      }`}>
+                        {msg.message}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
+
+          {/* Text Conversation Input Form */}
+          <form 
+            onSubmit={handleSendMessage}
+            className="flex items-center gap-2 mt-1 pt-3 border-t border-border/60"
+          >
+            <input
+              type="text"
+              placeholder="Type your message here..."
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              className="flex-1 bg-card border border-border rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary text-foreground placeholder:text-muted-foreground"
+              disabled={isSending}
+            />
+            <button
+              type="submit"
+              disabled={isSending || !textInput.trim()}
+              className="bg-primary hover:bg-primary/95 text-white font-bold p-2 px-4 rounded-xl text-xs disabled:opacity-50 transition-all cursor-pointer shadow-sm"
+            >
+              Send
+            </button>
+          </form>
         </div>
       )}
     </div>
