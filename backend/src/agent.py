@@ -183,6 +183,45 @@ class Assistant(Agent):
             )
 
 
+    @function_tool
+    async def create_escalation(
+        self,
+        context: RunContext,
+        name: str,
+        what_happened: str,
+        checked: str,
+        urgency: str,
+        language: str,
+        follow_up: str,
+    ) -> str:
+        """Create an escalation ticket for a human agent when the caller reports fraud or needs a decision the agent cannot make.
+
+        Before calling this tool, you MUST explicitly ask the caller for permission to share their details.
+
+        Args:
+            name: The name of the caller needing help.
+            what_happened: A brief summary of what happened or what decision is needed. Do NOT include sensitive info like full bank account numbers, credit/debit card numbers, PINs, OTPs, CVVs, passwords.
+            checked: What the agent already checked (e.g. eligibility criteria, basic fraud checks).
+            urgency: Urgency level of the request (must be one of 'High', 'Medium', 'Low').
+            language: The caller's language (e.g. 'English', 'Hindi', 'Hinglish').
+            follow_up: Preferred follow-up method (e.g. 'Call', 'Email').
+        """
+        logger.info(f"create_escalation tool called for user={name}")
+        try:
+            res = db.save_escalation(
+                name=name,
+                what_happened=what_happened,
+                checked=checked,
+                urgency=urgency,
+                language=language,
+                follow_up=follow_up
+            )
+            return json.dumps({"status": "success", "reference_id": res["reference_id"]})
+        except Exception as e:
+            logger.error(f"Error in create_escalation: {e}")
+            return json.dumps({"error": "Failed to create escalation ticket due to an internal error."})
+
+
 server = AgentServer()
 
 
