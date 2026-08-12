@@ -16,7 +16,7 @@ DIGIT_PATTERN = re.compile(r'\b(?:\d[\s-]*){8,20}\b')
 PAN_PATTERN = re.compile(r'\b[a-zA-Z]{5}\d{4}[a-zA-Z]\b')
 
 def init_db():
-    """Initializes the database and creates the callers table if it does not exist."""
+    """Initializes the database and creates the callers and escalations tables if they do not exist."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -28,9 +28,109 @@ def init_db():
             last_interaction TEXT
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS escalations (
+            reference_id TEXT PRIMARY KEY,
+            name TEXT,
+            what_happened TEXT,
+            checked TEXT,
+            urgency TEXT,
+            language TEXT,
+            follow_up TEXT,
+            status TEXT,
+            created_at TEXT
+        )
+    """)
     conn.commit()
     conn.close()
     logger.info(f"Database initialized at: {DB_PATH}")
+
+def save_escalation(name: str, what_happened: str, checked: str, urgency: str, language: str, follow_up: str):
+    """
+    Saves a new human escalation ticket to the database and returns the record.
+    """
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    import random
+    # Generate unique reference ID
+    for _ in range(10):
+        ref_id = f"ESC-{random.randint(1000, 9999)}"
+        cursor.execute("SELECT 1 FROM escalations WHERE reference_id = ?", (ref_id,))
+        if not cursor.fetchone():
+            break
+    else:
+        ref_id = f"ESC-{random.randint(10000, 99999)}"
+
+    from datetime import timezone
+    created_at = datetime.now(timezone.utc).isoformat()
+    status = "Open"
+
+    cursor.execute("""
+        INSERT INTO escalations (reference_id, name, what_happened, checked, urgency, language, follow_up, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (ref_id, name, what_happened, checked, urgency, language, follow_up, status, created_at))
+    
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"Created escalation ticket for user={name}, reference_id={ref_id}")
+    return {
+        "reference_id": ref_id,
+        "name": name,
+        "what_happened": what_happened,
+        "checked": checked,
+        "urgency": urgency,
+        "language": language,
+        "follow_up": follow_up,
+        "status": status,
+        "created_at": created_at
+    }
+
+def get_escalations():
+    """
+    Retrieves all escalations sorted by creation time.
+    """
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT reference_id, name, what_happened, checked, urgency, language, follow_up, status, created_at 
+        FROM escalations 
+        ORDER BY datetime(created_at) DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [
+        {
+            "reference_id": row[0],
+            "name": row[1],
+            "what_happened": row[2],
+            "checked": row[3],
+            "urgency": row[4],
+            "language": row[5],
+            "follow_up": row[6],
+            "status": row[7],
+            "created_at": row[8]
+        }
+        for row in rows
+    ]
+
+def update_escalation_status(reference_id: str, status: str):
+    """
+    Updates the status of a specific escalation.
+    """
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE escalations SET status = ? WHERE reference_id = ?", (status, reference_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Updated escalation status for reference_id={reference_id} to status={status}")
+    return {"reference_id": reference_id, "status": status}
+
 
 def validate_facts(facts: dict) -> dict:
     """
