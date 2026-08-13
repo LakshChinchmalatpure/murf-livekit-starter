@@ -41,7 +41,9 @@ export default function EscalationsDashboard() {
   const fetchEscalations = async (showRefreshState = false) => {
     if (showRefreshState) setRefreshing(true);
     try {
-      const res = await fetch('/api/escalations');
+      const res = await fetch(`/api/escalations?t=${Date.now()}`, {
+        cache: 'no-store'
+      });
       if (!res.ok) {
         throw new Error('Failed to fetch escalations');
       }
