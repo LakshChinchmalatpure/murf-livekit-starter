@@ -48,7 +48,7 @@ def fetch_schemes_data() -> tuple[dict, bool, str]:
         logger.error(f"Failed to load local fallback scheme details: {e}")
         # Emergency backup structure if local file is missing/corrupted
         backup_data = {
-            "last_updated": "2026-08-10 (emergency-fallback)",
+            "last_updated": "2026-08-13 (emergency-fallback)",
             "schemes": {
                 "PM Kisan": {
                     "name": "Pradhan Mantri Kisan Samman Nidhi",
