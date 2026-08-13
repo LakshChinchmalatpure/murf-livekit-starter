@@ -26,6 +26,18 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+# Global dict to track session success states
+active_calls_status = {}
+
+def _get_room(session):
+    if not session:
+        return None
+    if hasattr(session, "room"):
+        return session.room
+    if hasattr(session, "room_io") and hasattr(session.room_io, "room"):
+        return session.room_io.room
+    return None
+
 # # Change this prompt to change what your voice agent does.
 # # See README.md for example prompts (customer support, language tutor, receptionist).
 # SYSTEM_PROMPT = """You are a friendly and efficient customer support agent for a tech company. Help users with account issues, billing questions, and product troubleshooting. Be concise, empathetic, and solution-oriented. If you don't know something, say so honestly and offer to escalate. Your responses are concise and without complex formatting, emojis, or symbols."""
@@ -33,7 +45,32 @@ load_dotenv(".env.local")
 
 class Assistant(Agent):
     def __init__(self, instructions: str = SYSTEM_PROMPT) -> None:
-        super().__init__(instructions=instructions)
+        # Instruct LLM to call confirm_documents_delivered when appropriate
+        tool_instruction = "\n\n- When you have answered the caller's questions, completed an eligibility check, or listed the required documents, you MUST call the tool confirm_documents_delivered."
+        super().__init__(instructions=instructions + tool_instruction)
+
+    @function_tool
+    async def confirm_documents_delivered(self, context: RunContext) -> str:
+        """Mark that the caller has successfully received the document list or completed their eligibility check.
+
+        Call this tool as soon as you have provided the user with the list of documents they need,
+        or after they complete their eligibility check.
+        """
+        logger.info("confirm_documents_delivered tool called.")
+        try:
+            room = _get_room(context.session)
+            if room:
+                try:
+                    room_sid = await room.sid
+                except TypeError:
+                    room_sid = room.sid
+                if not room_sid:
+                    room_sid = room.name
+                if room_sid:
+                    active_calls_status[room_sid] = True
+        except Exception as e:
+            logger.error(f"Error in confirm_documents_delivered: {e}")
+        return "Success status recorded."
 
     @function_tool
     async def lookup_caller(self, context: RunContext, name: str | None = None) -> str:
@@ -171,6 +208,19 @@ class Assistant(Agent):
 
         try:
             res = schemes.evaluate_eligibility(scheme_name, answers_dict)
+            try:
+                room = _get_room(context.session)
+                if room:
+                    try:
+                        room_sid = await room.sid
+                    except TypeError:
+                        room_sid = room.sid
+                    if not room_sid:
+                        room_sid = room.name
+                    if room_sid:
+                        active_calls_status[room_sid] = True
+            except Exception as e:
+                logger.error(f"Error updating success status in check_scheme_eligibility: {e}")
             return json.dumps(res)
         except Exception as e:
             logger.error(f"Error in check_scheme_eligibility: {e}")
@@ -302,35 +352,56 @@ async def my_agent(ctx: JobContext):
         ctx.job.metadata == "outbound"
         or user.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP
     )
-    greeting = None
 
-    if is_outbound:
-        name = "there"
-        scheme_name = "your registered government scheme"
-        documents_list = "- Relevant eligibility documents"
+    try:
+        room_sid = await ctx.room.sid
+    except TypeError:
+        room_sid = ctx.room.sid
+    if not room_sid:
+        room_sid = ctx.room.name
+    caller_id = user.identity
+    caller_name = user.name or "Caller"
+    if record and record.get("name"):
+        caller_name = record["name"]
 
-        if record:
-            name = record.get("name", "there")
-            facts = record.get("facts", {})
-            schemes_checked = facts.get("schemes_checked", [])
-            eligible = facts.get("eligible", "undetermined")
+    db.start_call(
+        call_id=room_sid,
+        caller_id=caller_id,
+        caller_name=caller_name,
+        call_type="outbound" if is_outbound else "inbound"
+    )
 
-            if schemes_checked and eligible == "yes":
-                scheme_name = schemes_checked[0]
-                try:
-                    scheme_details = (
-                        schemes.fetch_schemes_data()[0]
-                        .get("schemes", {})
-                        .get(scheme_name, {})
-                    )
-                    docs = scheme_details.get("documents", [])
-                    if docs:
-                        documents_list = "\n".join([f"- {d}" for d in docs])
-                except Exception as e:
-                    logger.error(f"Error fetching scheme details: {e}")
+    active_calls_status[room_sid] = False
 
-        # Custom system prompt for outbound call with deadline
-        instructions = f"""You are a professional, polite, and helpful voice assistant for the Government Schemes service.
+    try:
+        greeting = None
+        if is_outbound:
+            name = "there"
+            scheme_name = "your registered government scheme"
+            documents_list = "- Relevant eligibility documents"
+
+            if record:
+                name = record.get("name", "there")
+                facts = record.get("facts", {})
+                schemes_checked = facts.get("schemes_checked", [])
+                eligible = facts.get("eligible", "undetermined")
+
+                if schemes_checked and eligible == "yes":
+                    scheme_name = schemes_checked[0]
+                    try:
+                        scheme_details = (
+                            schemes.fetch_schemes_data()[0]
+                            .get("schemes", {})
+                            .get(scheme_name, {})
+                        )
+                        docs = scheme_details.get("documents", [])
+                        if docs:
+                            documents_list = "\n".join([f"- {d}" for d in docs])
+                    except Exception as e:
+                        logger.error(f"Error fetching scheme details: {e}")
+
+            # Custom system prompt for outbound call with deadline
+            instructions = f"""You are a professional, polite, and helpful voice assistant for the Government Schemes service.
 You are making an outbound call to {name} regarding the {scheme_name} scheme.
 The user was previously found eligible for {scheme_name} on their last interaction.
 The application deadline for {scheme_name} is approaching on August 15, 2026.
@@ -346,15 +417,27 @@ Rules for the call:
 3. Keep your responses concise (1-2 sentences) and suitable for a phone call. Avoid markdown, lists, emojis, or complex formatting.
 4. If the user says 'stop', 'stop calling', or expresses that they want to end the call, politely say goodbye and hang up.
 """
-        greeting = f"Hello {name}, this is the Government Schemes Assistant calling to remind you that the application deadline is approaching for the {scheme_name} scheme, for which you were previously found eligible. If you want this call to stop, just say 'stop' or hang up at any time."
+            greeting = f"Hello {name}, this is the Government Schemes Assistant calling to remind you that the application deadline is approaching for the {scheme_name} scheme, for which you were previously found eligible. If you want this call to stop, just say 'stop' or hang up at any time."
 
-        # Update the agent with the new instructions
-        session.update_agent(Assistant(instructions=instructions))
+            # Update the agent with the new instructions
+            session.update_agent(Assistant(instructions=instructions))
 
-    # Greet the user if this is an outbound call
-    if greeting:
-        logger.info("Greeting outbound caller...")
-        await session.say(greeting, allow_interruptions=True)
+        # Greet the user if this is an outbound call
+        if greeting:
+            logger.info("Greeting outbound caller...")
+            await session.say(greeting, allow_interruptions=True)
+            # Mark outbound call as successful once greeted/documents delivered
+            active_calls_status[room_sid] = True
+
+        # Keep the session block alive until the room is disconnected
+        import asyncio
+        while ctx.room.connection_state != rtc.ConnectionState.CONN_DISCONNECTED:
+            await asyncio.sleep(1)
+
+    finally:
+        # Retrieve outcome status and update db
+        is_success = active_calls_status.pop(room_sid, False)
+        db.complete_call(call_id=room_sid, status="success" if is_success else "failed")
 
 
 if __name__ == "__main__":
