@@ -562,6 +562,7 @@ export function ViewController({ appConfig }: ViewControllerProps) {
           <a href="#fraud" className="hover:text-foreground transition-colors">{t.navFraud}</a>
           <a href="#literacy" className="hover:text-foreground transition-colors">{t.navLiteracy}</a>
           <a href="/escalations" className="hover:text-foreground transition-colors">{t.navEscalations}</a>
+          <a href="/dashboard" className="hover:text-foreground transition-colors">Dashboard</a>
         </nav>
 
         {/* Language Selector */}
