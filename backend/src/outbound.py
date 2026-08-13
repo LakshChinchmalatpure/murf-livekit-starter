@@ -1,126 +1,97 @@
-import os
-import sqlite3
-import json
+import asyncio
 import logging
-import re
-from datetime import datetime
+import os
+import time
 
-logger = logging.getLogger("db")
+from dotenv import load_dotenv
+from livekit import api
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "database.db")
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("outbound")
 
-# Match account/Aadhaar/card numbers: 8 to 20 digits (possibly separated by spaces/hyphens)
-DIGIT_PATTERN = re.compile(r'\b(?:\d[\s-]*){8,20}\b')
+# Load environment variables from backend/.env.local
+load_dotenv(".env.local")
 
-# Match PAN card numbers: 5 letters, 4 digits, 1 letter
-PAN_PATTERN = re.compile(r'\b[a-zA-Z]{5}\d{4}[a-zA-Z]\b')
 
-def init_db():
-    """Initializes the database and creates the callers table if it does not exist."""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS callers (
-            user_id TEXT PRIMARY KEY,
-            name TEXT,
-            language_preference TEXT,
-            facts TEXT,
-            last_interaction TEXT
+async def main():
+    url = os.getenv("LIVEKIT_URL")
+    api_key = os.getenv("LIVEKIT_API_KEY")
+    api_secret = os.getenv("LIVEKIT_API_SECRET")
+
+    # Support spelling variants from backend/.env.local
+    sip_uri = os.getenv("LINPHON_SIP_URI") or os.getenv("LINPHONE_SIP_URI")
+    trunk_id = os.getenv("LIVEKIT_SIP_TRUNCK_ID") or os.getenv("LIVEKIT_SIP_TRUNK_ID")
+
+    if not url or not api_key or not api_secret:
+        logger.error(
+            "Error: LiveKit credentials (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET) must be set in environment."
         )
-    """)
-    conn.commit()
-    conn.close()
-    logger.info(f"Database initialized at: {DB_PATH}")
+        return
 
-def validate_facts(facts: dict) -> dict:
-    """
-    Cleans facts by removing potential sensitive account numbers, cards, or ID numbers.
-    Returns a cleaned dictionary.
-    """
-    cleaned_facts = {}
-    for key, val in facts.items():
-        val_str = str(val)
-        
-        # Check for sequences of 8-20 digits (e.g. account numbers, Aadhaar, credit cards)
-        if DIGIT_PATTERN.search(val_str):
-            logger.warning(f"Validation warning: Removed fact key '{key}' containing potential account or ID number.")
-            continue
-            
-        # Check for PAN card numbers
-        if PAN_PATTERN.search(val_str):
-            logger.warning(f"Validation warning: Removed fact key '{key}' matching PAN card pattern.")
-            continue
-            
-        cleaned_facts[key] = val
-        
-    return cleaned_facts
+    if not sip_uri:
+        logger.error("Error: LINPHON_SIP_URI is not set in environment.")
+        return
 
-def get_caller(user_id: str = None, name: str = None):
-    """
-    Retrieves a caller by user_id or name (case-insensitive).
-    """
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    row = None
-    if user_id:
-        cursor.execute(
-            "SELECT user_id, name, language_preference, facts, last_interaction FROM callers WHERE user_id = ?",
-            (user_id,)
+    if not trunk_id:
+        logger.error("Error: LIVEKIT_SIP_TRUNCK_ID is not set in environment.")
+        return
+
+    logger.info(f"Initializing LiveKit API with URL: {url}")
+    lk_api = api.LiveKitAPI(url=url, api_key=api_key, api_secret=api_secret)
+
+    # Use a specific room name for the outbound session
+    room_name = f"outbound_call_laksh_{int(time.time())}"
+
+    # 1. Create agent dispatch
+    logger.info(
+        f"Creating agent dispatch for room '{room_name}' for agent 'my-agent'..."
+    )
+    try:
+        dispatch = await lk_api.agent_dispatch.create_dispatch(
+            api.CreateAgentDispatchRequest(
+                agent_name="my-agent", room=room_name, metadata="outbound"
+            )
         )
-        row = cursor.fetchone()
-        
-    if not row and name:
-        cursor.execute(
-            "SELECT user_id, name, language_preference, facts, last_interaction FROM callers WHERE LOWER(name) = LOWER(?)",
-            (name,)
-        )
-        row = cursor.fetchone()
-        
-    conn.close()
-    
-    if row:
-        return {
-            "user_id": row[0],
-            "name": row[1],
-            "language_preference": row[2],
-            "facts": json.loads(row[3]) if row[3] else {},
-            "last_interaction": row[4]
-        }
-    return None
+        logger.info(f"Agent dispatch created successfully. Dispatch ID: {dispatch.id}")
+    except Exception as e:
+        logger.error(f"Failed to create agent dispatch: {e}")
+        logger.info("Continuing call setup...")
 
-def save_caller(user_id: str, name: str, language_preference: str, facts: dict):
-    """
-    Saves or updates caller data. Facts are sanitized to prevent storage of sensitive ID/account numbers.
-    """
-    cleaned_facts = validate_facts(facts)
-    init_db()
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    
-    from datetime import timezone
-    last_interaction = datetime.now(timezone.utc).isoformat()
-    facts_json = json.dumps(cleaned_facts)
-    
-    cursor.execute("""
-        INSERT INTO callers (user_id, name, language_preference, facts, last_interaction)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(user_id) DO UPDATE SET
-            name=excluded.name,
-            language_preference=excluded.language_preference,
-            facts=excluded.facts,
-            last_interaction=excluded.last_interaction
-    """, (user_id, name, language_preference, facts_json, last_interaction))
-    
-    conn.commit()
-    conn.close()
-    logger.info(f"Saved caller info for user_id={user_id}, name={name}")
-    
-    return {
-        "user_id": user_id,
-        "name": name,
-        "language_preference": language_preference,
-        "facts": cleaned_facts,
-        "last_interaction": last_interaction
-    }
+    # Extract SIP user/username from SIP URI if needed (LiveKit API expects a SIP user/phone number)
+    sip_to = sip_uri
+    if sip_to.startswith("sip:"):
+        sip_to = sip_to[4:]
+    if "@" in sip_to:
+        sip_to = sip_to.split("@")[0]
+
+    # 2. Initiate outbound SIP Call
+    logger.info(
+        f"Initiating outbound SIP call to user '{sip_to}' (URI: '{sip_uri}') using trunk '{trunk_id}'..."
+    )
+    try:
+        # Create SIP participant to dial the user and add them to the room
+        participant = await lk_api.sip.create_sip_participant(
+            api.CreateSIPParticipantRequest(
+                sip_trunk_id=trunk_id,
+                sip_call_to=sip_to,
+                room_name=room_name,
+                participant_identity="voice_assistant_user_7335",  # Target eligible user in DB
+                participant_name="Laksh",
+                wait_until_answered=True,
+            )
+        )
+        logger.info(
+            f"SIP Outbound call placed! Participant ID: {participant.participant_id}, Call ID: {participant.sip_call_id}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to initiate outbound SIP call: {e}")
+    finally:
+        await lk_api.aclose()
+        logger.info("LiveKit API connection closed.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
