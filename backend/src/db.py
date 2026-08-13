@@ -16,7 +16,7 @@ DIGIT_PATTERN = re.compile(r'\b(?:\d[\s-]*){8,20}\b')
 PAN_PATTERN = re.compile(r'\b[a-zA-Z]{5}\d{4}[a-zA-Z]\b')
 
 def init_db():
-    """Initializes the database and creates the callers and escalations tables if they do not exist."""
+    """Initializes the database and creates the callers, escalations, and calls tables if they do not exist."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -39,6 +39,17 @@ def init_db():
             follow_up TEXT,
             status TEXT,
             created_at TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS calls (
+            call_id TEXT PRIMARY KEY,
+            caller_id TEXT,
+            caller_name TEXT,
+            call_type TEXT,
+            status TEXT,
+            start_time TEXT,
+            end_time TEXT
         )
     """)
     conn.commit()
@@ -224,3 +235,62 @@ def save_caller(user_id: str, name: str, language_preference: str, facts: dict):
         "facts": cleaned_facts,
         "last_interaction": last_interaction
     }
+
+
+def start_call(call_id: str, caller_id: str, caller_name: str, call_type: str):
+    """Logs the start of a call with a default status of failed/ongoing."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    from datetime import datetime, timezone
+    start_time = datetime.now(timezone.utc).isoformat()
+    cursor.execute("""
+        INSERT OR REPLACE INTO calls (call_id, caller_id, caller_name, call_type, status, start_time)
+        VALUES (?, ?, ?, ?, 'failed', ?)
+    """, (call_id, caller_id, caller_name, call_type, start_time))
+    conn.commit()
+    conn.close()
+    logger.info(f"Recorded start of call: {call_id} for user {caller_name}")
+
+
+def complete_call(call_id: str, status: str):
+    """Updates the status and end time of a call when it completes."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    from datetime import datetime, timezone
+    end_time = datetime.now(timezone.utc).isoformat()
+    cursor.execute("""
+        UPDATE calls
+        SET status = ?, end_time = ?
+        WHERE call_id = ?
+    """, (status, end_time, call_id))
+    conn.commit()
+    conn.close()
+    logger.info(f"Recorded completion of call: {call_id} with status {status}")
+
+
+def get_calls():
+    """Retrieves all calls sorted by start time."""
+    init_db()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT call_id, caller_id, caller_name, call_type, status, start_time, end_time
+        FROM calls
+        ORDER BY datetime(start_time) DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            "call_id": row[0],
+            "caller_id": row[1],
+            "caller_name": row[2],
+            "call_type": row[3],
+            "status": row[4],
+            "start_time": row[5],
+            "end_time": row[6]
+        }
+        for row in rows
+    ]
