@@ -168,7 +168,7 @@ async def test_agent_scheme_eligibility_flow() -> None:
                 llm_obj,
                 intent="""
                 The agent should announce that the user appears eligible for PM Kisan.
-                The agent MUST mention when the data is from (e.g. August 10, 2026 or 2026-08-10).
+                The agent MUST mention when the data is from (e.g. August 13, 2026 or 2026-08-13).
                 If it used offline/cached rules, it must state it could not reach the live portal and is using cached rules from that date.
                 The agent should list the documents required (like Aadhaar, Land documents, Bank Account, Mobile number).
                 """,
