@@ -134,5 +134,5 @@ def test_remote_fetch_fallback(monkeypatch):
     
     data, is_live, last_updated = schemes.fetch_schemes_data()
     assert is_live is False
-    assert last_updated == "2026-08-10"
+    assert last_updated == "2026-08-13"
     assert "PM Kisan" in data["schemes"]
