@@ -20,7 +20,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 import db
 import schemes
-from prompt import SYSTEM_PROMPT
+from prompt import SYSTEM_PROMPT, SPECIALIST_PROMPT
 
 logger = logging.getLogger("agent")
 
@@ -156,81 +156,24 @@ class Assistant(Agent):
         return f"Caller record saved successfully: {json.dumps(record)}"
 
     @function_tool
-    async def get_supported_schemes(self, context: RunContext) -> str:
-        """Get the list of supported Indian government financial schemes and their descriptions.
+    async def handoff_to_schemes_specialist(self, context: RunContext) -> Agent:
+        """Hand off the conversation to the Government Schemes Specialist agent.
 
-        Use this tool when a user asks what schemes you support, or what schemes they can check eligibility for.
+        Use this tool when the user wants to check government scheme eligibility or has specific questions about government schemes.
         """
-        logger.info("get_supported_schemes tool called.")
-        try:
-            res = schemes.get_supported_schemes_list()
-            return json.dumps(res)
-        except Exception as e:
-            logger.error(f"Error in get_supported_schemes: {e}")
-            return json.dumps(
-                {
-                    "error": "Failed to retrieve schemes list due to an internal error.",
-                    "is_live": False,
-                    "last_updated": "unknown",
-                }
-            )
+        logger.info("handoff_to_schemes_specialist tool called.")
 
-    @function_tool
-    async def check_scheme_eligibility(
-        self, context: RunContext, scheme_name: str, answers: str
-    ) -> str:
-        """Evaluate a user's eligibility and retrieve the required document checklist for a specific scheme.
+        # 1. State the handoff message clearly
+        await context.session.say("I will connect you to our government schemes specialist.", allow_interruptions=False)
 
-        Before calling this tool, you must gather the relevant answers (e.g. age, monthly income, land ownership)
-        from the user through conversation.
+        # 2. Switch to the specialist agent by returning it
+        specialist = GovernmentSchemeSpecialist(chat_ctx=context.session.history)
 
-        Args:
-            scheme_name: The exact key of the scheme to check (e.g., 'PM Kisan', 'PM Jan Dhan Yojana', 'PM Shram Yogi Maandhan', 'PM Suraksha Bima Yojana').
-            answers: A JSON string containing the user's details.
-                     Required keys for 'PM Kisan': {"owns_land": bool, "is_income_tax_payer": bool}
-                     Required keys for 'PM Jan Dhan Yojana': {"has_other_bank_account": bool, "age": int}
-                     Required keys for 'PM Shram Yogi Maandhan': {"age": int, "monthly_income": float, "is_unorganized_worker": bool, "is_covered_under_epf_esic": bool, "is_income_tax_payer": bool}
-                     Required keys for 'PM Suraksha Bima Yojana': {"age": int, "has_savings_bank_account": bool}
-        """
-        logger.info(
-            f"check_scheme_eligibility tool called for scheme_name={scheme_name} with answers={answers}"
-        )
-        try:
-            answers_dict = json.loads(answers)
-        except Exception:
-            return json.dumps(
-                {
-                    "error": "Invalid input format. Answers must be a valid JSON string.",
-                    "is_live": False,
-                    "last_updated": "unknown",
-                }
-            )
+        # 3. Introduce the specialist
+        specialist_intro = "Hello! I am the Government Schemes Specialist. I can help you check your eligibility and document requirements for supported government schemes. How can I help you today?"
+        await context.session.say(specialist_intro, allow_interruptions=True)
 
-        try:
-            res = schemes.evaluate_eligibility(scheme_name, answers_dict)
-            try:
-                room = _get_room(context.session)
-                if room:
-                    try:
-                        room_sid = await room.sid
-                    except TypeError:
-                        room_sid = room.sid
-                    if not room_sid:
-                        room_sid = room.name
-                    if room_sid:
-                        active_calls_status[room_sid] = True
-            except Exception as e:
-                logger.error(f"Error updating success status in check_scheme_eligibility: {e}")
-            return json.dumps(res)
-        except Exception as e:
-            logger.error(f"Error in check_scheme_eligibility: {e}")
-            return json.dumps(
-                {
-                    "error": "Failed to evaluate scheme eligibility due to an internal error.",
-                    "is_live": False,
-                    "last_updated": "unknown",
-                }
-            )
+        return specialist
 
 
     @function_tool
@@ -270,6 +213,115 @@ class Assistant(Agent):
         except Exception as e:
             logger.error(f"Error in create_escalation: {e}")
             return json.dumps({"error": "Failed to create escalation ticket due to an internal error."})
+
+
+class GovernmentSchemeSpecialist(Agent):
+    def __init__(self, instructions: str = SPECIALIST_PROMPT, chat_ctx = None) -> None:
+        # Instruct LLM to call confirm_documents_delivered when appropriate
+        tool_instruction = "\n\n- When you have answered the caller's questions, completed an eligibility check, or listed the required documents, you MUST call the tool confirm_documents_delivered."
+        super().__init__(instructions=instructions + tool_instruction, chat_ctx=chat_ctx)
+
+
+    @function_tool
+    async def confirm_documents_delivered(self, context: RunContext) -> str:
+        """Mark that the caller has successfully received the document list or completed their eligibility check.
+
+        Call this tool as soon as you have provided the user with the list of documents they need,
+        or after they complete their eligibility check.
+        """
+        logger.info("specialist: confirm_documents_delivered tool called.")
+        try:
+            room = _get_room(context.session)
+            if room:
+                try:
+                    room_sid = await room.sid
+                except TypeError:
+                    room_sid = room.sid
+                if not room_sid:
+                    room_sid = room.name
+                if room_sid:
+                    active_calls_status[room_sid] = True
+        except Exception as e:
+            logger.error(f"Error in confirm_documents_delivered: {e}")
+        return "Success status recorded."
+
+    @function_tool
+    async def get_supported_schemes(self, context: RunContext) -> str:
+        """Get the list of supported Indian government financial schemes and their descriptions.
+
+        Use this tool when a user asks what schemes you support, or what schemes they can check eligibility for.
+        """
+        logger.info("specialist: get_supported_schemes tool called.")
+        try:
+            res = schemes.get_supported_schemes_list()
+            return json.dumps(res)
+        except Exception as e:
+            logger.error(f"Error in get_supported_schemes: {e}")
+            return json.dumps(
+                {
+                    "error": "Failed to retrieve schemes list due to an internal error.",
+                    "is_live": False,
+                    "last_updated": "unknown",
+                }
+            )
+
+    @function_tool
+    async def check_scheme_eligibility(
+        self, context: RunContext, scheme_name: str, answers: str
+    ) -> str:
+        """Evaluate a user's eligibility and retrieve the required document checklist for a specific scheme.
+
+        Before calling this tool, you must gather the relevant answers (e.g. age, monthly income, land ownership)
+        from the user through conversation.
+
+        Args:
+            scheme_name: The exact key of the scheme to check (e.g., 'PM Kisan', 'PM Jan Dhan Yojana', 'PM Shram Yogi Maandhan', 'PM Suraksha Bima Yojana').
+            answers: A JSON string containing the user's details.
+                     Required keys for 'PM Kisan': {"owns_land": bool, "is_income_tax_payer": bool}
+                     Required keys for 'PM Jan Dhan Yojana': {"has_other_bank_account": bool, "age": int}
+                     Required keys for 'PM Shram Yogi Maandhan': {"age": int, "monthly_income": float, "is_unorganized_worker": bool, "is_covered_under_epf_esic": bool, "is_income_tax_payer": bool}
+                     Required keys for 'PM Suraksha Bima Yojana': {"age": int, "has_savings_bank_account": bool}
+        """
+        logger.info(
+            f"specialist: check_scheme_eligibility tool called for scheme_name={scheme_name} with answers={answers}"
+        )
+        try:
+            answers_dict = json.loads(answers)
+        except Exception:
+            return json.dumps(
+                {
+                    "error": "Invalid input format. Answers must be a valid JSON string.",
+                    "is_live": False,
+                    "last_updated": "unknown",
+                }
+            )
+
+        try:
+            res = schemes.evaluate_eligibility(scheme_name, answers_dict)
+            try:
+                room = _get_room(context.session)
+                if room:
+                    try:
+                        room_sid = await room.sid
+                    except TypeError:
+                        room_sid = room.sid
+                    if not room_sid:
+                        room_sid = room.name
+                    if room_sid:
+                        active_calls_status[room_sid] = True
+            except Exception as e:
+                logger.error(f"Error updating success status in check_scheme_eligibility: {e}")
+            return json.dumps(res)
+        except Exception as e:
+            logger.error(f"Error in check_scheme_eligibility: {e}")
+            return json.dumps(
+                {
+                    "error": "Failed to evaluate scheme eligibility due to an internal error.",
+                    "is_live": False,
+                    "last_updated": "unknown",
+                }
+            )
+
 
 
 server = AgentServer()
