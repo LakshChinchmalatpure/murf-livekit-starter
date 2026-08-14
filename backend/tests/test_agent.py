@@ -175,3 +175,55 @@ async def test_agent_scheme_eligibility_flow() -> None:
             )
         )
 
+
+@pytest.mark.asyncio
+async def test_agent_handoff_flow() -> None:
+    """Verify that a normal safety question is answered by the main agent, and a government schemes question is handed off to the specialist."""
+    async with (
+        _llm() as llm_obj,
+        AgentSession(llm=llm_obj) as session,
+    ):
+        await session.start(Assistant())
+
+        # 1. Ask a normal UPI safety question that the main agent should answer directly.
+        result1 = await session.run(user_input="How can I keep my UPI account safe?")
+
+        # Verify the main agent answered without handoff
+        msg_idx1 = next((i for i, e in enumerate(result1.events) if type(e).__name__ == "ChatMessageEvent" and e.item.role == "assistant"), -1)
+        assert msg_idx1 != -1, "Assistant message event not found for UPI safety query"
+        await (
+            result1.expect.skip_next(msg_idx1).next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm_obj,
+                intent="""
+                Provides educational advice on UPI safety (e.g. not sharing PIN/OTP, checking payment details).
+                The response must NOT say that it is connecting the user to a schemes specialist.
+                """,
+            )
+        )
+        # Ensure handoff was not called
+        assert session.current_agent.__class__.__name__ == "Assistant"
+
+        # 2. Ask a question about checking government scheme eligibility.
+        result2 = await session.run(user_input="Hi, my name is Amit. I want to check my eligibility for the PM Kisan scheme.")
+
+        # Verify that the active agent is now the GovernmentSchemeSpecialist
+        assert session.current_agent.__class__.__name__ == "GovernmentSchemeSpecialist"
+
+        # Verify that the handoff message was spoken and specialist introduced itself
+        msg_idx2 = next((i for i in range(len(result2.events) - 1, -1, -1) if type(result2.events[i]).__name__ == "ChatMessageEvent" and result2.events[i].item.role == "assistant"), -1)
+        assert msg_idx2 != -1, "Assistant message event not found after handoff"
+
+        await (
+            result2.expect.skip_next(msg_idx2).next_event()
+            .is_message(role="assistant")
+            .judge(
+                llm_obj,
+                intent="""
+                The specialist introduces itself as the Government Schemes Specialist and offers to help check eligibility and requirements for supported schemes.
+                """,
+            )
+        )
+
+
