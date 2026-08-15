@@ -75,7 +75,7 @@ flowchart LR
 ### Step 1: Clone the repo
 
 ```bash
-git clone https://github.com/murf-ai/murf-livekit-starter.git
+git clone https://github.com/LakshChinchmalatpure/murf-livekit-starter.git
 cd murf-livekit-starter
 ```
 
