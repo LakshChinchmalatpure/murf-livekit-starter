@@ -124,8 +124,9 @@ chmod +x start_app.sh
 
 ```bash
 # Terminal 1 — LiveKit Server
-cd "D:\livekit_murfAI"        
->> .\livekit-server.exe --dev
+cd "D:\livekit_murfAI"
+.\livekit-server.exe --dev
+
 
 # Terminal 2 — Backend agent
 cd backend && uv run python src/agent.py dev
